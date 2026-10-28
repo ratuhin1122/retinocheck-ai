@@ -4,7 +4,6 @@ from dataclasses import asdict
 import json
 import os
 from pathlib import Path
-import random
 import numpy as np
 import torch
 from tqdm.auto import tqdm
@@ -12,16 +11,7 @@ from .config import Config
 from .data import make_loaders
 from .model import build_model
 from .evaluate import metrics, predict
-
-
-def seed_everything(seed):
-    random.seed(seed)
-    np.random.seed(seed)
-    torch.manual_seed(seed)
-    if torch.cuda.is_available():
-        torch.cuda.manual_seed_all(seed)
-    torch.backends.cudnn.benchmark = False
-    torch.backends.cudnn.deterministic = True
+from .utils import seed_everything
 
 
 def atomic_save(payload, path):
@@ -113,7 +103,7 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser()
     parser.add_argument("--model", choices=["resnet18", "efficientnet_b0"], default="resnet18")
     parser.add_argument("--output-dir", required=True)
-    parser.add_argument("--epochs", type=int, default=10)
+    parser.add_argument("--epochs", type=int, default=15)
     parser.add_argument("--resume")
     args = parser.parse_args()
     train(Config(model_name=args.model, output_dir=args.output_dir, epochs=args.epochs), args.resume)

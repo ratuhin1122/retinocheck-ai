@@ -4,13 +4,13 @@ Research prototype for five-class diabetic retinopathy severity grading from fun
 
 ## Start in Google Colab
 
-1. Upload this repository to Google Drive as `MyDrive/RetinoCheckAI/repo` (or clone your own Git repository into `/content` and adjust the notebook path).
+1. Push this repository to GitHub. Set `REPO_URL` in the notebook setup cell to your repository URL. The setup clones code into `/content/retinocheck-ai`.
 2. Open `notebooks/01_colab.ipynb` in Colab. Select **Runtime → Change runtime type → T4 GPU**. Free GPU availability is not guaranteed.
 3. Run setup, dataset verification, and training cells in order. Grant Drive mounting access when Colab prompts.
 4. Train ResNet18 first. Change `MODEL` to `efficientnet_b0` and rerun the configuration and training cells for a separate experiment with identical splits.
 5. Use validation metrics to select the model and settings, then run the held-out test cell once for the selected model. Test results must not guide further tuning.
 
-Logic lives in `src/`; the notebook only performs environment setup and calls project functions. Defaults: 224 px, batch size 32, ten epochs, AdamW, training-only class-weighted cross entropy. Reduce batch size to 16 on a GPU memory error; start a separate run when changing settings. Runtime and accuracy are not promised. Class weights are optional and must be chosen using validation results.
+Logic lives in `src/`; the notebook only performs environment setup and calls project functions. Defaults: 224 px, batch size 32, seed 42, learning rate 1e-4, weight decay 1e-2, 15 epochs, AdamW, training-only class-weighted cross entropy. Reduce batch size to 16 on a GPU memory error; start a separate run when changing settings. Runtime and accuracy are not promised. Class weights are optional and must be chosen using validation results.
 
 ## Dataset verification and fallback
 
@@ -26,7 +26,7 @@ Patient identifiers are not available in this loader. Image-level splitting cann
 
 ## Checkpoints and recovery
 
-The notebook mounts Drive and writes directly to `MyDrive/RetinoCheckAI/<model>/`. Each completed epoch writes `last.pt`, including model, best model, optimizer, LR scheduler, AMP scaler, epoch, config, split manifest and history. `best.pt` tracks the highest validation QWK; ties preserve the earlier model. Files use temporary-file replacement. Drive synchronization is not a transactional backup guarantee: confirm files appear in Drive. Disconnecting during an epoch loses that epoch's work, while the previous completed checkpoint should remain usable.
+The notebook mounts Drive and writes directly to `MyDrive/RetinoCheckAI/checkpoints/<model>/`. Each completed epoch writes `last.pt`, including model, best model, optimizer, LR scheduler, AMP scaler, epoch, config, split manifest and history. `best.pt` tracks the highest validation QWK; ties preserve the earlier model. Files use temporary-file replacement. Drive synchronization is not a transactional backup guarantee: confirm files appear in Drive. Disconnecting during an epoch loses that epoch's work, while the previous completed checkpoint should remain usable.
 
 Rerun setup after a disconnect, rebuild the same configuration, and set `RESUME = True`. Epoch-boundary seeds recreate shuffling/augmentation with the same environment and worker count; GPU results can still vary across hardware/library versions. Increase `epochs` to extend a run. Other training settings must match. Checkpoints intentionally include best weights to preserve model selection when resuming to another directory. Resume rewrites `best.pt` from those weights; consult `history` for the best epoch. Load only project checkpoints you trust.
 
@@ -51,4 +51,4 @@ In Colab use the final notebook cell. It explicitly opens a temporary public Gra
 - `reports/`: reporting instructions, not fabricated metrics.
 - `MODEL_CARD.md`: intended use and limitations.
 
-Dependencies use bounded ranges for Colab compatibility, not a reproducible lockfile. Keep Colab's matching torch/torchvision pair when possible, and save `pip freeze` with each run. Source validation in the authoring environment is documented in `reports/VALIDATION.md`.
+Direct dependencies are pinned for Python 3.11–3.13. Setup installs the official PyTorch 2.6.0 / torchvision 0.21.0 CUDA 12.4 pair; this is not a full transitive lockfile. A complete installation on a live Colab T4 has not been verified here. Restart the session if older package versions were already imported, and save `pip freeze` with each run. Source validation in the authoring environment is documented in `reports/VALIDATION.md`.

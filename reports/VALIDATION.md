@@ -9,4 +9,6 @@ Passed locally on CPU (Python 3.13, torch 2.14.0+cpu, torchvision 0.29.0+cpu):
 
 Not verified in this environment: Hugging Face Python download, pretrained-weight download, complete model training, numerical metrics with scikit-learn, Drive recovery, Grad-CAM and Gradio launch. The local environment lacks datasets/scikit-learn and the shell could not resolve the dataset server. The HF web viewer was reachable and confirmed the published image/label schema. The Colab notebook includes a real load and image-decode check before training.
 
+Starter-file update: direct dependencies are now pinned, defaults are 224 px / batch 32 / seed 42 / learning rate 1e-4 / weight decay 1e-2 / 15 epochs, and the shared helper is in `src/utils.py`. Updated source and setup-cell syntax, configuration ratios and Python/NumPy/torch CPU seed repeatability passed locally. The pinned environment itself has not been installed or tested here; the existing local torch version differs from the pins. The setup checks imports and a real CUDA tensor operation in Colab.
+
 No GPU training or model performance is claimed. Complete a one-epoch Colab run, confirm Drive files, resume it for another epoch, evaluate, and try the optional demo before starting longer experiments. Use a separate smoke-test output folder to keep these runs separate from reported experiments.
