@@ -24,6 +24,13 @@ class Config:
     split_file: str = str(DRIVE_ROOT / "splits" / "aptos_indices.json")
     output_dir: str = str(CHECKPOINT_ROOT / "resnet18")
     image_size: int = 224
+    ben_graham: bool = True
+    enhancement_sigma: float | None = None  # None means image_size / 30.
+    enhancement_gain: float = 4.0
+    enhancement_mean: float = 128.0
+    border_threshold: int = 10
+    cache_preprocessed: bool = False
+    preprocessed_cache_dir: str = str(DRIVE_ROOT / "cache" / "preprocessed")
     batch_size: int = 32
     epochs: int = 15
     lr: float = 1e-4
@@ -51,3 +58,9 @@ class Config:
             raise ValueError("Learning rate must be positive; weight decay cannot be negative")
         if self.num_workers < 0:
             raise ValueError("num_workers cannot be negative")
+        if self.enhancement_sigma is not None and self.enhancement_sigma <= 0:
+            raise ValueError("Enhancement sigma must be positive")
+        if self.enhancement_gain <= 0 or not 0 <= self.enhancement_mean <= 255:
+            raise ValueError("Invalid enhancement gain or mean")
+        if not 0 <= self.border_threshold <= 255:
+            raise ValueError("Border threshold must be in [0, 255]")

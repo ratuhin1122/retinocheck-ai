@@ -13,7 +13,10 @@ def build_model(name, pretrained=True):
 def load_checkpoint(path, device="cpu"):
     # Only tensor/primitive checkpoints are written by this project.
     checkpoint = torch.load(path, map_location="cpu", weights_only=True)
-    config = Config(**checkpoint["config"])
+    settings = dict(checkpoint["config"])
+    # Older project checkpoints used crop/resize without enhancement.
+    settings.setdefault("ben_graham", False)
+    config = Config(**settings)
     model = build_model(config.model_name, pretrained=False)
     model.load_state_dict(checkpoint["model"])
     return model.to(device).eval(), config, checkpoint

@@ -7,25 +7,29 @@ from pathlib import Path
 import numpy as np
 from PIL import Image
 from torch.utils.data import Dataset, DataLoader
-from .preprocess import make_transform
+from .preprocess import build_transform, build_preprocessor
 from .config import CLASS_NAMES
 
 
 class FundusDataset(Dataset):
-    def __init__(self, source, indices, transform):
+    def __init__(self, source, indices, transform, preprocessor=None):
         self.source, self.indices, self.transform = source, indices, transform
+        self.preprocessor = preprocessor
 
     def __len__(self):
         return len(self.indices)
 
     def __getitem__(self, index):
-        row = self.source[int(self.indices[index])]
+        source_index = int(self.indices[index])
+        row = self.source[source_index]
         if isinstance(row["image"], str):
-            with Image.open(row["image"]) as image:
-                tensor = self.transform(image.convert("RGB"))
+            with Image.open(row["image"]) as opened:
+                image = opened.convert("RGB")
         else:
-            tensor = self.transform(row["image"].convert("RGB"))
-        return tensor, int(row["label_code"])
+            image = row["image"].convert("RGB")
+        if self.preprocessor is not None:
+            image = self.preprocessor(image)
+        return self.transform(image), int(row["label_code"])
 
 
 def load_source(config):
@@ -51,7 +55,7 @@ def load_source(config):
     if set(labels.tolist()) != set(range(5)):
         raise ValueError("Expected all five numeric grades, 0 through 4")
     # Decode one image now so broken image dependencies fail before training.
-    FundusDataset(source, [0], make_transform(config.image_size))[0]
+    FundusDataset(source, [0], build_transform(config))[0]
     return source, labels.astype(np.int64), identity
 
 
@@ -244,9 +248,11 @@ def make_loaders(config, saved_manifest=None):
     source, labels, identity = load_source(config)
     manifest = get_or_create_splits(config, labels, identity, saved_manifest)
     loaders = {}
+    processor = build_preprocessor(config)
     for split, indices in manifest["indices"].items():
         dataset = FundusDataset(source, indices,
-                                make_transform(config.image_size, train=split == "train"))
+                                build_transform(config, train=split == "train", preprocessed=True),
+                                preprocessor=processor)
         loaders[split] = DataLoader(dataset, batch_size=config.batch_size,
             shuffle=split == "train", num_workers=config.num_workers,
             pin_memory=True)

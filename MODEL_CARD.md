@@ -10,7 +10,7 @@ Educational experiments and research on fundus-image classification. Grades map 
 
 ## Data and processing
 
-Default source: https://huggingface.co/datasets/bumbledeep/aptos . Alternate: original Kaggle APTOS 2019 labeled training images. Record source, immutable revision, counts and split fingerprint for every trained artifact. The hosted copy has 224×224 images. RGB conversion, dark-border cropping, square padding, resizing and ImageNet normalization are shared across splits and inference. Training additionally uses horizontal flips, small rotations and brightness/contrast jitter.
+Default source: https://huggingface.co/datasets/bumbledeep/aptos . Alternate: original Kaggle APTOS 2019 labeled training images. Record source, immutable revision, counts and split fingerprint for every trained artifact. The hosted copy has 224×224 images. RGB conversion, dark-border cropping, square padding, resizing, optional Ben Graham-style enhancement and ImageNet normalization are shared across splits and inference. Enhancement defaults to `clip(4 * (image - GaussianBlur(image)) + 128, 0, 255)`, with sigma equal to output size divided by 30, preserving black background. Training additionally uses horizontal/vertical flips, small rotations and light brightness/contrast jitter. Optional lossless PNG caching stores only deterministic preprocessing. No evidence is yet provided that enhancement improves performance.
 
 Stratified image-level 70/15/15 splits with seed 42. Patient grouping is unavailable; independence and absence of duplicates are unverified. Dataset population, camera mix, annotation quality and representation across demographic groups are insufficiently characterized here. Review original dataset documentation and permissions before use.
 

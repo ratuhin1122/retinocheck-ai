@@ -40,6 +40,16 @@ Rerun setup after a disconnect, rebuild the same configuration, and set `RESUME 
 
 Grad-CAM targets `layer4[-1]` for ResNet18 and `conv_head` for EfficientNet-B0. It highlights sensitivity for the predicted class. It neither establishes lesion localization nor explains causal reasoning. Softmax scores are uncalibrated and do not measure clinical certainty. The demo accepts arbitrary images and has no validated fundus or image-quality rejection.
 
+## Preprocessing and optional Drive cache
+
+Run `notebooks/02_preprocessing.ipynb` to display six training images before/after deterministic preprocessing. It writes `reports/preprocessing_examples.png` in the clone and a durable copy at `MyDrive/RetinoCheckAI/reports/preprocessing_examples.png`. The figure is generated from real data when the notebook runs; no APTOS example figure is prefilled in this repository.
+
+The common stage converts to RGB, crops pixels outside a bounding box above intensity 10, pads to square, resizes to `config.image_size`, then applies optional Ben Graham-style enhancement: `clip(4 * (image - GaussianBlur(image)) + 128, 0, 255)`. Default Gaussian sigma is `image_size / 30`. Black background stays black. Pillow implements an approximate Gaussian blur; this does not claim pixel parity with an OpenCV implementation. Disable enhancement with `config.ben_graham=False` for a separately tracked baseline. Enhancement can suppress information or amplify artifacts; choose settings with validation data rather than assuming it improves QWK.
+
+After this shared stage, training adds horizontal/vertical flips, rotations up to 15 degrees and light brightness/contrast jitter. Evaluation only resizes, converts to a tensor and applies ImageNet normalization. Training, evaluation, the demo and Grad-CAM use the same configured deterministic preprocessing. Older checkpoints lacking the enhancement setting are loaded without enhancement for inference; use matching settings when resuming experiments.
+
+Set `config.cache_preprocessed=True` to lazily save/reuse deterministic RGB PNGs under `MyDrive/RetinoCheckAI/cache/preprocessed`. The notebook also has a `CACHE_TO_DRIVE` switch to warm the entire cache. Enable caching in the training notebook too if desired. Keys include original pixels/dimensions, settings, algorithm version and Pillow version, so settings changes do not reuse stale images. Augmentation and normalized tensors are never cached, and cached images are not enhanced twice. Source images still need decoding for content hashing, and Drive I/O can be slower than recomputing this lightweight stage.
+
 ## Demo
 
 From the repository root: `python -m app.gradio_app --checkpoint /path/to/best.pt`.

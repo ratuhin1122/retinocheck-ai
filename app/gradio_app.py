@@ -4,7 +4,7 @@ import gradio as gr
 import torch
 from src.config import CLASS_NAMES
 from src.model import load_checkpoint
-from src.preprocess import make_transform
+from src.preprocess import build_transform
 from src.explain import explain
 
 
@@ -15,7 +15,7 @@ def create_app(checkpoint_path):
     def classify(image):
         if image is None:
             raise gr.Error("Upload a fundus image for this research demo.")
-        tensor = make_transform(config.image_size)(image).unsqueeze(0).to(device)
+        tensor = build_transform(config)(image).unsqueeze(0).to(device)
         with torch.no_grad():
             probabilities = model(tensor).softmax(1)[0].cpu().tolist()
         overlay = explain(model, image, config)

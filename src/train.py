@@ -30,6 +30,8 @@ def train(config, resume=None):
         raise FileExistsError("Run already exists: resume last.pt or choose a new output_dir")
     checkpoint = torch.load(resume, map_location="cpu", weights_only=True) if resume else None
     if checkpoint:
+        if checkpoint["config"].get("ben_graham", False) != config.ben_graham:
+            raise ValueError("Resume enhancement differs. Match the original pipeline or start a new run.")
         # An extended epoch budget is allowed; optimizer/split settings must agree.
         for key, value in checkpoint["config"].items():
             if key not in ("epochs", "output_dir", "num_workers") and getattr(config, key) != value:

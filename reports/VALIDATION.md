@@ -16,3 +16,7 @@ No GPU training or model performance is claimed. Complete a one-epoch Colab run,
 ## Data exploration update
 
 `notebooks/01_data_exploration.ipynb` has eight syntactically valid Python code cells and no prefilled outputs. Source compilation passed. Five synthetic split-persistence tests passed: checkpoint-index recovery and unchanged reload, rejection of source/seed/label changes, overlap detection, checkpoint conflict detection, and preservation of a corrupt file without overwriting it. One new-split stratification test was skipped because scikit-learn is unavailable locally. An attempt to fetch test dependencies found no accessible distribution through this environment's pip connection. Full HF loading, chart rendering and new stratified-split creation remain checks to run in Colab; no real-data statistics are fabricated here.
+
+## Preprocessing update
+
+Seven additional offline tests passed with synthetic images: crop/padding and all-black handling; floating-point enhancement and clipping; RGB/grayscale/RGBA inputs; exact cached/uncached pixels and cache-key changes; deterministic evaluation with no double enhancement; augmentation output shapes/variation; and six-pair PNG comparison export. Together with the five split-persistence tests, 12 tests passed and the scikit-learn-dependent stratification test was skipped. All four code cells in `02_preprocessing.ipynb` passed syntax checks. The real APTOS comparison figure, Drive cache behavior and GPU integration still require running the notebook in Colab.
