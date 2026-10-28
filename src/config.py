@@ -21,6 +21,7 @@ class Config:
     dataset_name: str = "bumbledeep/aptos"
     revision: str = "main"  # Use an immutable Hub commit for a final experiment.
     local_data: str = ""  # Kaggle directory with train.csv and train_images/.
+    split_file: str = str(DRIVE_ROOT / "splits" / "aptos_indices.json")
     output_dir: str = str(CHECKPOINT_ROOT / "resnet18")
     image_size: int = 224
     batch_size: int = 32

@@ -20,6 +20,10 @@ If it fails, obtain the original [Kaggle APTOS 2019 competition data](https://ww
 
 ## Splits and leakage
 
+Run `notebooks/01_data_exploration.ipynb` for columns, image counts, class counts/bar chart, three original images per grade and an all-image dimensions scan. Its cells call `src/data.py`; no training logic is embedded. Replace the setup cell's GitHub URL first.
+
+The exploration notebook and both training backbones share `MyDrive/RetinoCheckAI/splits/aptos_indices.json` (`Config.split_file`). First creation writes the stratified indices; every later run reads the existing file without overwriting it. The file includes the dataset fingerprint, ordered-label hash, seed and ratios. Changed data or settings, corrupt files, incomplete/overlapping indices and conflicting checkpoint splits raise errors. Keep a backup of this file; if it is lost, restore original indices from a checkpoint rather than treating a new split as the same experiment. Switching to the Kaggle source requires a separately named split file and a separate experiment. Integer rounding makes exact split counts approximate.
+
 Fixed seed 42 creates stratified 70% train / 15% validation / 15% test image-level partitions (rounding affects exact sizes). Both backbones share these splits when source and seed agree. Only training images receive augmentation; class weights use training labels only. Checkpoints contain the dataset fingerprint and split indices; resume/evaluation refuse a changed fingerprint. Set `revision` to an immutable Hugging Face commit for final experiments. The local-source identity hashes the path/label manifest, not image bytes: retain immutable local files.
 
 Patient identifiers are not available in this loader. Image-level splitting cannot establish patient independence or exclude duplicates. Audit duplicate/near-duplicate images and patient overlap before reporting strong generalization claims; if identifiers become available, replace splitting with stratified patient-group splitting. No external validation is provided.
