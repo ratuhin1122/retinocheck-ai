@@ -140,10 +140,7 @@ def apply_thresholds(raw: np.ndarray, thresholds: np.ndarray) -> np.ndarray:
 def _qwk_neg(thresholds: np.ndarray, raw: np.ndarray, truth: np.ndarray,
               num_classes: int) -> float:
     """Objective for threshold optimiser (negated QWK, for minimisation)."""
-    # Enforce monotonicity via cumsum of softplus-transformed differences.
-    # We optimise over unconstrained real parameters and reconstruct thresholds
-    # inside the objective so the solver never encounters an invalid ordering.
-    thr = np.cumsum(np.log1p(np.exp(thresholds)))
+    thr = np.sort(thresholds)
     predictions = apply_thresholds(raw, thr)
     try:
         kappa = cohen_kappa_score(truth, predictions,
@@ -159,8 +156,13 @@ def optimise_thresholds(
     truth: np.ndarray,
     num_classes: int = 5,
     n_restarts: int = 5,
+    initial_thresholds: Optional[List[float]] = None,
 ) -> Tuple[np.ndarray, float]:
     """Search for QWK-maximising thresholds on the validation set.
+
+    For 5 classes, exactly 4 thresholds [thr0, thr1, thr2, thr3] partition
+    the continuous prediction scale into 5 ordinal integer grades (0, 1, 2, 3, 4).
+    Standard rounding corresponds to [0.5, 1.5, 2.5, 3.5].
 
     Parameters
     ----------
@@ -171,21 +173,45 @@ def optimise_thresholds(
     num_classes:
         Number of grade classes (determines number of thresholds = num_classes-1).
     n_restarts:
-        Number of random restarts for the Nelder-Mead solver.
+        Number of restarts for the Nelder-Mead solver.
+    initial_thresholds:
+        Optional initial cut-points. Defaults to [0.5, 1.5, ..., num_classes - 1.5].
 
     Returns
     -------
     thresholds : np.ndarray, shape (num_classes - 1,)
         Monotonically increasing cut-points in the same scale as *raw*.
     best_qwk : float
+        Best QWK achieved with the optimized cut-points.
     """
-    rng = np.random.default_rng(0)
-    best_qwk = -np.inf
-    best_thr: Optional[np.ndarray] = None
     n_thr = num_classes - 1
+    if initial_thresholds is None:
+        base_x0 = np.arange(n_thr, dtype=float) + 0.5
+    else:
+        base_x0 = np.array(initial_thresholds, dtype=float)
 
-    for _ in range(n_restarts):
-        x0 = rng.uniform(-1.0, 1.0, size=n_thr)
+    # Evaluate standard rounding cut-points as baseline
+    best_thr = base_x0.copy()
+    best_qwk = -_qwk_neg(best_thr, raw, truth, num_classes)
+
+    # Nelder-Mead starting at base_x0
+    result = minimize(
+        _qwk_neg,
+        base_x0,
+        args=(raw, truth, num_classes),
+        method="Nelder-Mead",
+        options={"maxiter": 2000, "xatol": 1e-4, "fatol": 1e-4},
+    )
+    qwk = -result.fun
+    if qwk > best_qwk:
+        best_qwk = qwk
+        best_thr = np.sort(result.x)
+
+    # Restarts with jittered starting points around base_x0
+    rng = np.random.default_rng(0)
+    for _ in range(n_restarts - 1):
+        jitter = rng.uniform(-0.35, 0.35, size=n_thr)
+        x0 = np.sort(base_x0 + jitter)
         result = minimize(
             _qwk_neg,
             x0,
@@ -196,7 +222,7 @@ def optimise_thresholds(
         qwk = -result.fun
         if qwk > best_qwk:
             best_qwk = qwk
-            best_thr = np.cumsum(np.log1p(np.exp(result.x)))
+            best_thr = np.sort(result.x)
 
     return best_thr, best_qwk
 
@@ -405,7 +431,11 @@ def train(config: Config, resume: Optional[str] = None,
 
     # --- Loss function ---
     if config.mode == "regression":
-        criterion: nn.Module = nn.SmoothL1Loss()
+        reg_loss = getattr(config, "regression_loss", "smooth_l1")
+        if reg_loss == "mse":
+            criterion: nn.Module = nn.MSELoss()
+        else:
+            criterion: nn.Module = nn.SmoothL1Loss()
     else:
         if config.class_weights and not config.use_weighted_sampler:
             counts = np.bincount(train_labels, minlength=config.num_classes)
@@ -642,6 +672,10 @@ if __name__ == "__main__":
     parser.add_argument(
         "--mode", choices=["classification", "regression"], default="classification"
     )
+    parser.add_argument(
+        "--regression-loss", choices=["smooth_l1", "mse"], default="smooth_l1",
+        help="Loss for regression mode: smooth_l1 or mse (default: smooth_l1)."
+    )
     parser.add_argument("--output-dir", required=True)
     parser.add_argument("--epochs", type=int, default=15)
     parser.add_argument(
@@ -669,6 +703,7 @@ if __name__ == "__main__":
             output_dir=args.output_dir,
             epochs=args.epochs,
             mode=args.mode,
+            regression_loss=args.regression_loss,
             patience=args.patience,
             use_weighted_sampler=args.use_weighted_sampler,
             threshold_search=not args.no_threshold_search,

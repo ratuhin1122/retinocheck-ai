@@ -1,5 +1,6 @@
 """Fixed-label metrics and saved test reports; no test-driven model selection."""
 import argparse
+import csv
 import json
 from pathlib import Path
 import numpy as np
@@ -86,6 +87,40 @@ def evaluate(checkpoint_path, output_dir="reports", split="test"):
     plt.savefig(root / f"{split}_confusion_matrix.png", dpi=160)
     plt.close()
     return result
+
+
+def save_results_csv(records: list, filepath: str = "reports/results.csv") -> Path:
+    """Save model evaluation comparison records to a CSV file.
+
+    Parameters
+    ----------
+    records:
+        List of dicts with keys: 'model', 'mode', 'regularization',
+        'accuracy', 'macro_f1', 'qwk'.
+    filepath:
+        Destination CSV file path (defaults to 'reports/results.csv').
+
+    Returns
+    -------
+    Path
+        Path to the saved CSV file.
+    """
+    path = Path(filepath)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    fieldnames = ["model", "mode", "regularization", "accuracy", "macro_f1", "qwk"]
+    with open(path, "w", newline="", encoding="utf-8") as f:
+        writer = csv.DictWriter(f, fieldnames=fieldnames)
+        writer.writeheader()
+        for r in records:
+            writer.writerow({
+                "model": r.get("model", ""),
+                "mode": r.get("mode", ""),
+                "regularization": r.get("regularization", ""),
+                "accuracy": f"{float(r['accuracy']):.4f}" if isinstance(r.get("accuracy"), (int, float)) else r.get("accuracy", ""),
+                "macro_f1": f"{float(r['macro_f1']):.4f}" if isinstance(r.get("macro_f1"), (int, float)) else r.get("macro_f1", ""),
+                "qwk": f"{float(r['qwk']):.4f}" if isinstance(r.get("qwk"), (int, float)) else r.get("qwk", ""),
+            })
+    return path
 
 
 if __name__ == "__main__":

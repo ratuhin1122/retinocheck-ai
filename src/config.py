@@ -41,8 +41,10 @@ class Config:
     test_fraction: float = TEST_RATIO
     class_weights: bool = True
     # --- new fields (train.py v2) -------------------------------------------
-    # "classification" uses CrossEntropyLoss; "regression" uses SmoothL1Loss.
+    # "classification" uses CrossEntropyLoss; "regression" uses SmoothL1Loss or MSELoss.
     mode: str = "classification"
+    # Loss function for regression mode: "smooth_l1" or "mse".
+    regression_loss: str = "smooth_l1"
     # Number of DR severity grades (classification head width).
     num_classes: int = 5
     # Early-stopping patience in epochs (0 = disabled).
@@ -62,6 +64,8 @@ class Config:
             raise ValueError("Choose resnet18 or efficientnet_b0")
         if self.mode not in ("classification", "regression"):
             raise ValueError("mode must be 'classification' or 'regression'")
+        if self.regression_loss not in ("smooth_l1", "mse"):
+            raise ValueError("regression_loss must be 'smooth_l1' or 'mse'")
         if self.num_classes < 2:
             raise ValueError("num_classes must be at least 2")
         if self.patience < 0:

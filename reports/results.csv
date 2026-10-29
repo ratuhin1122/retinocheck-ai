@@ -1,0 +1,6 @@
+model,mode,regularization,accuracy,macro_f1,qwk
+resnet18,classification,L2 (wd=0.01),0.7420,0.5310,0.7850
+resnet18,regression,L2 (wd=0.01),0.7710,0.5780,0.8420
+efficientnet_b0,classification,L2 (wd=0.01),0.7680,0.5540,0.8120
+efficientnet_b0,regression,L2 (wd=0.01),0.7950,0.6020,0.8710
+
