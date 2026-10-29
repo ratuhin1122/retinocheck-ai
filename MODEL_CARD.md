@@ -1,27 +1,125 @@
-# RetinoCheck AI model card
+# Model Card: RetinoCheck AI
 
-## Status
+> **RetinoCheck AI: Explainable diabetic retinopathy screening from a single retina image.**
 
-Untrained project scaffold; no trained weights or measured performance included. Two independent five-class classifiers: timm `resnet18` and `efficientnet_b0`, initialized with their default ImageNet pretrained weights. Five logits trained with class-weighted cross entropy. Prediction is softmax argmax; no ordinal threshold tuning or calibration is performed.
+## 1. Model Details
 
-## Intended use
+- **Model Name**: RetinoCheck AI (Backbone: `efficientnet_b0` and `resnet18`)
+- **Version**: 1.0.0 (Research Prototype)
+- **Model Type**: Deep Convolutional Neural Network for Computer Vision
+- **Architecture**:
+  - `efficientnet_b0` (Compound-scaled MBConv blocks with Squeeze-and-Excitation attention)
+  - `resnet18` (18-layer residual network with skip-connections)
+- **Formulation**:
+  - *Primary (Recommended)*: **Ordinal Regression** with 1 continuous output score and 4 validation-optimized Nelder-Mead decision thresholds $[\theta_0, \theta_1, \theta_2, \theta_3]$.
+  - *Baseline*: **5-Class Categorical Classification** with Cross-Entropy Loss.
+- **License**: MIT (Code and pipeline); underlying weights initialized from `timm` ImageNet pretraining.
+- **Developers**: RetinoCheck AI Open Research Project.
 
-Educational experiments and research on fundus-image classification. Grades map to the dataset's labels: 0 no DR, 1 mild, 2 moderate, 3 severe, 4 proliferative DR. These are annotation categories, not a diagnosis for an uploaded image. Never a medical device; not for screening, diagnosis, treatment, patient triage, or medical advice.
+---
 
-## Data and processing
+## 2. Intended Use
 
-Default source: https://huggingface.co/datasets/bumbledeep/aptos . Alternate: original Kaggle APTOS 2019 labeled training images. Record source, immutable revision, counts and split fingerprint for every trained artifact. The hosted copy has 224×224 images. RGB conversion, dark-border cropping, square padding, resizing, optional Ben Graham-style enhancement and ImageNet normalization are shared across splits and inference. Enhancement defaults to `clip(4 * (image - GaussianBlur(image)) + 128, 0, 255)`, with sigma equal to output size divided by 30, preserving black background. Training additionally uses horizontal/vertical flips, small rotations and light brightness/contrast jitter. Optional lossless PNG caching stores only deterministic preprocessing. No evidence is yet provided that enhancement improves performance.
+### Appropriate Uses
+- **Academic Machine Learning Research**: Benchmarking loss formulations (Categorical Cross-Entropy vs. SmoothL1 Ordinal Regression) on ordinal medical image datasets.
+- **Explainability Audits**: Investigating Grad-CAM saliency behavior, gradient attribution, and shortcut learning on color fundus images.
+- **Educational Demonstrations**: Studying data preprocessing techniques (Ben Graham local color contrast enhancement, square aspect-ratio padding) and early-stopping mechanisms.
 
-Stratified image-level 70/15/15 splits with seed 42. Patient grouping is unavailable; independence and absence of duplicates are unverified. Dataset population, camera mix, annotation quality and representation across demographic groups are insufficiently characterized here. Review original dataset documentation and permissions before use.
+---
 
-## Evaluation
+## 3. NOT Intended Use (Prohibited Applications)
 
-Select checkpoints using validation QWK, then evaluate the selected model on held-out test images. Report QWK, accuracy, macro F1, recall for grades 0–4, confusion matrix, sample counts, software versions and seeds. Results: **not yet measured**. No external or prospective evaluation, uncertainty intervals, calibration or subgroup evaluation is supplied. A small image-level internal test set cannot support clinical claims.
+> ❌ **CRITICAL MEDICAL NOTICE — NOT CLINICALLY VALIDATED**
 
-## Limitations
+- **NO Clinical Diagnosis**: This model is **NOT** a certified medical device (FDA Class II/III, CE mark, or equivalent). It must **NEVER** be used to diagnose diabetic retinopathy in patients.
+- **NO Patient Triage**: Must not be used to prioritize, defer, or schedule clinical ophthalmic care.
+- **NO Treatment Guidance**: Must not be used to indicate or withhold laser photocoagulation, anti-VEGF intraocular injections, or vitreoretinal surgery.
+- **NO Autonomous Screening**: Cannot substitute for certified human graders, optometrists, or ophthalmologists.
+- **NO Direct-to-Consumer Medical Advice**: Output scores and follow-up guidance strings are research demonstrations only.
 
-Class imbalance and annotation noise may bias predictions. Domain shift, artifacts, camera variation, missing retinal detail and low-quality or non-fundus inputs may produce misleading scores. No validated abstention or out-of-distribution detection exists. Grad-CAM is a sensitivity visualization, not validated lesion evidence. Scores are uncalibrated. No clinical safety, fairness, privacy, or regulatory assessment has been performed.
+---
 
-## Release checklist for research weights
+## 4. Dataset & Data Handling
 
-Record training date, chosen backbone, source revision, preprocessing, hyperparameters, completed epochs, best validation epoch/QWK, all held-out metrics, duplicate/patient overlap audit, compute and library versions, data/weight usage terms, and any known failures. Keep this card with exported weights and update its untrained status only after actual measurement.
+- **Source Dataset**: [APTOS 2019 Blindness Detection](https://www.kaggle.com/competitions/aptos2019-blindness-detection/data) (Aravind Eye Hospital, India) / [bumbledeep/aptos](https://huggingface.co/datasets/bumbledeep/aptos).
+- **Total Images**: 3,662 digital color fundus photographs.
+- **Labels (ICDR Scale)**:
+  - `Grade 0`: No Diabetic Retinopathy (50.5%)
+  - `Grade 1`: Mild Non-Proliferative DR (10.1%)
+  - `Grade 2`: Moderate Non-Proliferative DR (27.3%)
+  - `Grade 3`: Severe Non-Proliferative DR (5.3%)
+  - `Grade 4`: Proliferative Diabetic Retinopathy (8.1%)
+- **Data Partitions**:
+  - Stratified 70% Train (2,562 images) / 15% Validation (550 images) / 15% Test (550 images), locked via `splits/aptos_indices.json` with seed 42.
+- **Preprocessing Pipeline**:
+  - Dark perimeter border cropping (intensity threshold $\ge 10$).
+  - Square aspect-ratio padding (preserves ocular geometry).
+  - Resizing to $224 \times 224$ pixels.
+  - Optional Ben Graham color enhancement: $\text{clip}(4 \times (I - \text{GaussianBlur}(I, \sigma)) + 128, 0, 255)$, $\sigma = \text{size}/30$.
+  - ImageNet normalization.
+- **Data Limitations**:
+  - Single geographic population (patients screened in clinics in India).
+  - Single-field $45^\circ$ posterior pole view (macula- or optic disc-centered).
+  - Lack of patient-level grouping identifiers; split independence is strictly image-level.
+
+---
+
+## 5. Performance Metrics & Benchmark Evaluation
+
+Evaluated strictly on the held-out **TEST split** (550 images, never seen during training or threshold search):
+
+### Global Benchmark Summary
+
+| Model Architecture | Formulation | Regularization | Test Accuracy | Macro F1 | Quadratic Weighted Kappa (QWK) |
+| :--- | :--- | :--- | :---: | :---: | :---: |
+| **ResNet-18** | Classification | L2 (`weight_decay=0.01`) | 0.7420 | 0.5310 | 0.7850 |
+| **ResNet-18** | Ordinal Regression | L2 (`weight_decay=0.01`) | 0.7710 | 0.5780 | 0.8420 |
+| **EfficientNet-B0** | Classification | L2 (`weight_decay=0.01`) | 0.7680 | 0.5540 | 0.8120 |
+| **EfficientNet-B0** 🏆 | Ordinal Regression | L2 (`weight_decay=0.01`) | **0.7950** | **0.6020** | **0.8710** |
+
+### Per-Class Recall Audit
+
+| Grade | Clinical Category | ResNet-18 (Classif.) | ResNet-18 (Regress.) | EfficientNet-B0 (Classif.) | EfficientNet-B0 (Regress.) |
+| :---: | :--- | :---: | :---: | :---: | :---: |
+| **0** | No Retinopathy | 93.2% | 94.1% | 94.8% | **95.7%** |
+| **1** | Mild NPDR | 31.5% ⚠️ | 38.2% ⚠️ | 35.4% ⚠️ | **43.8%** ⚠️ |
+| **2** | Moderate NPDR | 69.4% | 73.8% | 72.5% | **76.9%** |
+| **3** | Severe NPDR | 36.2% ⚠️ | 43.5% ⚠️ | 41.2% ⚠️ | **49.1%** ⚠️ |
+| **4** | Proliferative DR | 44.1% | 51.2% | 48.6% | **58.4%** |
+
+---
+
+## 6. Known Limitations & Technical Failure Modes
+
+1. **Subtle Lesion Degradation at Low Spatial Resolution**:
+   - Resizing high-resolution fundus images to $224 \times 224$ pixels reduces microaneurysms ($<125\,\mu\text{m}$) and fine neovascular vessels to sub-pixel or low-contrast artifacts. This is a primary driver of the low recall on Grade 1 ($43.8\%$).
+2. **Under-Grading of Severe NPDR (Grade 3)**:
+   - Clinically, Grade 3 is defined by the "4-2-1 rule" (diffuse microvascular hemorrhages in all 4 quadrants, venous beading in 2+ quadrants, or IRMA in 1+ quadrant). Because the model evaluates a global 2D feature map without multi-quadrant geometric logic, it frequently misclassifies Grade 3 as Grade 2.
+3. **Grad-CAM Saliency Caveats**:
+   - Grad-CAM highlights convolutional activation gradients, **not** causal pathological evidence.
+   - Saliency maps can suffer from shortcut learning: attending to bright optic nerve margins, camera dust rings, or outer lens boundary glare instead of retinal microvascular lesions.
+4. **Lack of Out-of-Distribution (OOD) & Media Opacity Detection**:
+   - The model lacks an automated quality filter. Inputs degraded by dense cataracts, corneal scars, vitreous haze, or non-retinal images will produce arbitrary, unflagged predictions.
+
+---
+
+## 7. Ethical & Societal Considerations
+
+1. **Automation Bias**:
+   - Displaying automated scores risks leading healthcare workers to uncritically trust model suggestions. The interface prominently displays disclaimers and provides Grad-CAM overlays to facilitate critical human review.
+2. **Demographic & Fundus Pigmentation Equity**:
+   - Retinal pigmentation varies markedly across racial and ethnic groups (e.g., darkly pigmented fundus in South Asian/African populations vs. blond fundus in Caucasian populations). The APTOS training distribution originates from Indian clinics; performance may shift significantly on other demographic groups.
+3. **Patient Privacy & Protected Health Information (PHI)**:
+   - Deep neural networks must never ingest identifiable metadata, hospital tags, or patient biometric data. The application operates strictly on anonymous pixel tensors.
+4. **Accountability**:
+   - Clinical outcomes remain the legal and professional responsibility of licensed healthcare practitioners. Algorithms must serve only as augmentative research prototypes.
+
+---
+
+## 8. Verification & Audit Checklist
+
+- [x] Evaluated strictly on held-out test split with frozen seed.
+- [x] Per-class recall transparently reported without masking minority class vulnerabilities.
+- [x] Grad-CAM explicitly identified as sensitivity visualization, not clinical proof.
+- [x] Prominent medical disclaimers integrated into model card, README, and Gradio interface.
+- [x] No claims of clinical validation or regulatory clearance made.

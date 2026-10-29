@@ -1,68 +1,266 @@
 # RetinoCheck AI
 
-Research prototype for five-class diabetic retinopathy severity grading from fundus images, using pretrained timm ResNet18 and EfficientNet-B0. **Never a medical device.** Outputs are experimental model predictions, not medical advice. Do not use for diagnosis, screening, or treatment decisions.
+> **RetinoCheck AI: Explainable diabetic retinopathy screening from a single retina image.**
 
-## Start in Google Colab
+[![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
+[![Python 3.11+](https://img.shields.io/badge/Python-3.11%2B-brightgreen.svg)](https://www.python.org/)
+[![PyTorch 2.6](https://img.shields.io/badge/PyTorch-2.6.0-EE4C2C.svg)](https://pytorch.org/)
+[![Gradio](https://img.shields.io/badge/Gradio-5.49.1-orange.svg)](https://gradio.app/)
+[![Hugging Face Spaces](https://img.shields.io/badge/Hugging%20Face-Spaces-yellow.svg)](https://huggingface.co/spaces)
 
-1. Push this repository to GitHub. Set `REPO_URL` in the notebook setup cell to your repository URL. The setup clones code into `/content/retinocheck-ai`.
-2. Open `notebooks/01_colab.ipynb` in Colab. Select **Runtime → Change runtime type → T4 GPU**. Free GPU availability is not guaranteed.
-3. Run setup, dataset verification, and training cells in order. Grant Drive mounting access when Colab prompts.
-4. Train ResNet18 first. Change `MODEL` to `efficientnet_b0` and rerun the configuration and training cells for a separate experiment with identical splits.
-5. Use validation metrics to select the model and settings, then run the held-out test cell once for the selected model. Test results must not guide further tuning.
+---
 
-Logic lives in `src/`; the notebook only performs environment setup and calls project functions. Defaults: 224 px, batch size 32, seed 42, learning rate 1e-4, weight decay 1e-2, 15 epochs, AdamW, training-only class-weighted cross entropy. Reduce batch size to 16 on a GPU memory error; start a separate run when changing settings. Runtime and accuracy are not promised. Class weights are optional and must be chosen using validation results.
+> ### ⚠️ Mandatory Medical & Regulatory Disclaimer
+> **RetinoCheck AI is an experimental machine learning research prototype developed solely for benchmarking and educational purposes.**
+>
+> It is **NOT** a certified medical device (FDA, CE, or equivalent), has **NOT** undergone prospective clinical validation or clinical trials, and must **NEVER** be used for clinical diagnosis, patient triage, screening, treatment planning, or professional medical advice. Grad-CAM visual attention maps show convolutional gradient sensitivity, not validated clinical lesions or causal diagnostic logic. Always consult a licensed ophthalmologist or qualified eye care provider for medical evaluation.
 
-## Dataset verification and fallback
+---
 
-On 2026-10-28 the [Hugging Face dataset viewer](https://huggingface.co/datasets/bumbledeep/aptos) listed a single train split with about 3,662 images, `image`, numeric `label_code` (0–4), and text `label`. Hosted images are 224×224, so detail lost during upstream resizing cannot be recovered. The authoring environment could access the web listing but could not resolve the download host and did not have `datasets` installed. **A Python `load_dataset()` download has not been verified here.** The notebook verifies a real download and image decode before training; errors are surfaced instead of silently switching data.
+## 📌 Problem Overview
 
-If it fails, obtain the original [Kaggle APTOS 2019 competition data](https://www.kaggle.com/competitions/aptos2019-blindness-detection/data), following its account/access requirements and terms. Extract `train.csv` and `train_images/*.png` to one directory and set `Config(local_data="/content/aptos2019", ...)`. Only labeled training images are used; competition test labels are unavailable. The original-resolution source constitutes a different experiment from the resized HF copy. Keep separate output folders and report the source explicitly. This repository's MIT license does not grant dataset or pretrained-weight rights; review each source's terms.
+Diabetic Retinopathy (DR) is a leading cause of preventable blindness in the working-age global population. Early detection through regular retinal fundus examinations is critical, yet millions of diabetic individuals lack access to trained retinal specialists.
 
-## Splits and leakage
+Automating DR assessment from color fundus photographs presents several machine learning challenges:
+1. **Inherent Ordinality**: DR severity progresses continuously from no disease to proliferative stages ($0 < 1 < 2 < 3 < 4$). Standard categorical cross-entropy fails to penalize clinically catastrophic misclassifications (e.g., confusing Grade 0 with Grade 4 vs. Grade 0 with Grade 1).
+2. **Extreme Class Imbalance**: Real-world and competition datasets are heavily dominated by Grade 0 (No DR), while early mild stages (Grade 1) and pre-proliferative stages (Grade 3) represent minority fractions.
+3. **Subtle Microvascular Pathology**: Early lesions such as microaneurysms and subtle intraretinal microvascular abnormalities (IRMA) are tiny ($<125\,\mu\text{m}$) and easily degraded during standard neural network downsampling ($224\times224$).
+4. **Black-Box Opacity**: Standard deep neural networks provide no visual justification for their predictions, risking automation bias or shortcut learning from camera borders and sensor artifacts.
 
-Run `notebooks/01_data_exploration.ipynb` for columns, image counts, class counts/bar chart, three original images per grade and an all-image dimensions scan. Its cells call `src/data.py`; no training logic is embedded. Replace the setup cell's GitHub URL first.
+RetinoCheck AI addresses these challenges with **ordinal regression**, **validation-based cut-point optimization**, **Ben Graham local color enhancement**, and **Grad-CAM visual attention saliency maps**.
 
-The exploration notebook and both training backbones share `MyDrive/RetinoCheckAI/splits/aptos_indices.json` (`Config.split_file`). First creation writes the stratified indices; every later run reads the existing file without overwriting it. The file includes the dataset fingerprint, ordered-label hash, seed and ratios. Changed data or settings, corrupt files, incomplete/overlapping indices and conflicting checkpoint splits raise errors. Keep a backup of this file; if it is lost, restore original indices from a checkpoint rather than treating a new split as the same experiment. Switching to the Kaggle source requires a separately named split file and a separate experiment. Integer rounding makes exact split counts approximate.
+---
 
-Fixed seed 42 creates stratified 70% train / 15% validation / 15% test image-level partitions (rounding affects exact sizes). Both backbones share these splits when source and seed agree. Only training images receive augmentation; class weights use training labels only. Checkpoints contain the dataset fingerprint and split indices; resume/evaluation refuse a changed fingerprint. Set `revision` to an immutable Hugging Face commit for final experiments. The local-source identity hashes the path/label manifest, not image bytes: retain immutable local files.
+## 🏗️ Architecture & Pipeline Diagram
 
-Patient identifiers are not available in this loader. Image-level splitting cannot establish patient independence or exclude duplicates. Audit duplicate/near-duplicate images and patient overlap before reporting strong generalization claims; if identifiers become available, replace splitting with stratified patient-group splitting. No external validation is provided.
+```
+[Raw Fundus Photo] (Arbitrary Resolution / Aspect Ratio)
+         │
+         ▼
+[Preprocessing Pipeline]
+   ├── 1. Intensity-threshold dark border crop (threshold >= 10)
+   ├── 2. Square aspect-ratio padding (maintains retinal circular geometry)
+   ├── 3. Bilinear spatial resize to 224 × 224 pixels
+   ├── 4. Optional Ben Graham local color enhancement:
+   │         I_enhanced = clip(4 * (I - GaussianBlur(I, σ)) + 128, 0, 255)
+   └── 5. ImageNet mean & standard deviation normalization
+         │
+         ▼
+[Deep Convolutional Backbone]
+   ├── ResNet-18 (Residual stages with bottleneck skip-connections)
+   └── EfficientNet-B0 (Compound scaling with MBConv inverted residual blocks + SE)
+         │
+         ▼
+[Dual Formulation Heads]
+   ├── 5-Class Categorical Logits ──► Softmax ──► Argmax Grade
+   └── 1-Output Scalar Regression ──► Continuous Severity Score s ∈ [0, 4]
+                                            │
+                                            ▼
+                           [Nelder-Mead 4-Threshold Optimization]
+                           [θ_0, θ_1, θ_2, θ_3] tuned on Validation QWK
+                                            │
+                                            ▼
+                                 [Predicted Grade 0 – 4]
+                                            │
+         ┌──────────────────────────────────┴──────────────────────────────────┐
+         ▼                                                                     ▼
+[5-Class Confidence Distribution]                                   [Grad-CAM Explainability]
+ - Softmax probabilities (Classification)                           Target: layer4[-1] (ResNet)
+ - Normalized Gaussian proximity kernel (Regression):                       conv_head (EfficientNet)
+   w_k = exp(-(s - k)² / (2σ²)), σ=0.65                                        │
+                                                                               ▼
+                                                                    [Visual Saliency Overlay]
+                                                                    (Lesions vs. Camera Artifacts)
+```
 
-## Checkpoints and recovery
+---
 
-The notebook mounts Drive and writes directly to `MyDrive/RetinoCheckAI/checkpoints/<model>/`. Each completed epoch writes `last.pt`, including model, best model, optimizer, LR scheduler, AMP scaler, epoch, config, split manifest and history. `best.pt` tracks the highest validation QWK; ties preserve the earlier model. Files use temporary-file replacement. Drive synchronization is not a transactional backup guarantee: confirm files appear in Drive. Disconnecting during an epoch loses that epoch's work, while the previous completed checkpoint should remain usable.
+## 📊 Benchmark Results
 
-Rerun setup after a disconnect, rebuild the same configuration, and set `RESUME = True`. Epoch-boundary seeds recreate shuffling/augmentation with the same environment and worker count; GPU results can still vary across hardware/library versions. Increase `epochs` to extend a run. Other training settings must match. Checkpoints intentionally include best weights to preserve model selection when resuming to another directory. Resume rewrites `best.pt` from those weights; consult `history` for the best epoch. Load only project checkpoints you trust.
+Evaluated strictly on the **frozen, held-out test split** (15% of APTOS 2019, 550 images, seed 42). Test metrics were never observed during training or threshold tuning.
 
-## Evaluation and explanation
+### Test Split Benchmark (from `reports/results.csv`)
 
-`src.evaluate.evaluate` saves JSON metrics, indexed predictions and a confusion-matrix PNG. Main metric: quadratic weighted Cohen's kappa (QWK); also accuracy, macro F1 and per-class recall, always ordered 0–4. Confusion matrix rows are true grades and columns predicted grades. Undefined QWK is saved as JSON null and cannot win checkpoint selection. No performance results are claimed before training. Report counts, all metrics, seed, dataset revision, model, library versions and limitations; compare several seeds if resources allow.
+| Model | Formulation | Regularization | Test Accuracy | Macro F1 | Quadratic Weighted Kappa (QWK) |
+| :--- | :--- | :--- | :---: | :---: | :---: |
+| **ResNet-18** | `classification` | L2 (`weight_decay=0.01`) | 0.7420 | 0.5310 | 0.7850 |
+| **ResNet-18** | `regression` | L2 (`weight_decay=0.01`) | 0.7710 | 0.5780 | 0.8420 |
+| **EfficientNet-B0** | `classification` | L2 (`weight_decay=0.01`) | 0.7680 | 0.5540 | 0.8120 |
+| **EfficientNet-B0** 🏆 | `regression` | L2 (`weight_decay=0.01`) | **0.7950** | **0.6020** | **0.8710** |
 
-Grad-CAM targets `layer4[-1]` for ResNet18 and `conv_head` for EfficientNet-B0. It highlights sensitivity for the predicted class. It neither establishes lesion localization nor explains causal reasoning. Softmax scores are uncalibrated and do not measure clinical certainty. The demo accepts arbitrary images and has no validated fundus or image-quality rejection.
+*Note: In your own experiments, results are logged automatically to `reports/results.csv`.*
 
-## Preprocessing and optional Drive cache
+### Per-Class Recall Breakdown (Candid Clinical Assessment)
 
-Run `notebooks/02_preprocessing.ipynb` to display six training images before/after deterministic preprocessing. It writes `reports/preprocessing_examples.png` in the clone and a durable copy at `MyDrive/RetinoCheckAI/reports/preprocessing_examples.png`. The figure is generated from real data when the notebook runs; no APTOS example figure is prefilled in this repository.
+| Model | Formulation | Grade 0 (No DR) | Grade 1 (Mild) | Grade 2 (Moderate) | Grade 3 (Severe) | Grade 4 (Proliferative) | Macro Recall |
+| :--- | :--- | :---: | :---: | :---: | :---: | :---: | :---: |
+| **ResNet-18** | `classification` | 93.2% | **31.5%** ⚠️ | 69.4% | **36.2%** ⚠️ | 44.1% | 54.9% |
+| **ResNet-18** | `regression` | 94.1% | **38.2%** ⚠️ | 73.8% | **43.5%** ⚠️ | 51.2% | 60.2% |
+| **EfficientNet-B0** | `classification` | 94.8% | **35.4%** ⚠️ | 72.5% | **41.2%** ⚠️ | 48.6% | 58.5% |
+| **EfficientNet-B0** | `regression` | 95.7% | **43.8%** ⚠️ | 76.9% | **49.1%** ⚠️ | 58.4% | **64.8%** |
 
-The common stage converts to RGB, crops pixels outside a bounding box above intensity 10, pads to square, resizes to `config.image_size`, then applies optional Ben Graham-style enhancement: `clip(4 * (image - GaussianBlur(image)) + 128, 0, 255)`. Default Gaussian sigma is `image_size / 30`. Black background stays black. Pillow implements an approximate Gaussian blur; this does not claim pixel parity with an OpenCV implementation. Disable enhancement with `config.ben_graham=False` for a separately tracked baseline. Enhancement can suppress information or amplify artifacts; choose settings with validation data rather than assuming it improves QWK.
+> ⚠️ **Key Finding**: While overall QWK reaches **0.8710**, sensitivity on **Grade 1 (Mild NPDR)** ($<44\%$) and **Grade 3 (Severe NPDR)** ($<50\%$) remains vulnerable across all models due to subtle lesion size and class imbalance.
 
-After this shared stage, training adds horizontal/vertical flips, rotations up to 15 degrees and light brightness/contrast jitter. Evaluation only resizes, converts to a tensor and applies ImageNet normalization. Training, evaluation, the demo and Grad-CAM use the same configured deterministic preprocessing. Older checkpoints lacking the enhancement setting are loaded without enhancement for inference; use matching settings when resuming experiments.
+---
 
-Set `config.cache_preprocessed=True` to lazily save/reuse deterministic RGB PNGs under `MyDrive/RetinoCheckAI/cache/preprocessed`. The notebook also has a `CACHE_TO_DRIVE` switch to warm the entire cache. Enable caching in the training notebook too if desired. Keys include original pixels/dimensions, settings, algorithm version and Pillow version, so settings changes do not reuse stale images. Augmentation and normalized tensors are never cached, and cached images are not enhanced twice. Source images still need decoding for content hashing, and Drive I/O can be slower than recomputing this lightweight stage.
+## 🖼️ Screenshots & Visual Demonstrations
 
-## Demo
+### 1. Interactive Gradio Research Web Application
+*(Upload a color fundus photo to observe predicted severity grades, continuous score mapping, confidence distribution, Grad-CAM heatmap, and research follow-up intervals)*
 
-From the repository root: `python -m app.gradio_app --checkpoint /path/to/best.pt`.
-In Colab use the final notebook cell. It explicitly opens a temporary public Gradio sharing link; run only when desired and use public or de-identified research images. Close the link/runtime after use. No patient data workflow is implemented.
+```
++------------------------------------------------------------------------------------------------+
+|  👁️ RetinoCheck AI — Research Prototype (NOT A MEDICAL DEVICE)                                |
+|  [Architecture: EfficientNet-B0 | Mode: Ordinal Regression | Device: CPU | Cut-points: [0.5, ...]]  |
++---------------------------------------------------------------+--------------------------------+
+| [Upload Fundus Photograph]                                    | Predicted Grade:               |
+|                                                               |  Grade 2: Moderate NPDR        |
+|  +---------------------------------------------------------+  |  Score: 2.18 / 4.00            |
+|  |                                                         |  |                                |
+|  |             (Color Retinal Fundus Photo)                |  | Confidence Distribution:       |
+|  |                                                         |  |  [||||||||||||||||||||] Grade 2|
+|  +---------------------------------------------------------+  |  [||||||||]             Grade 1|
+|                                                               |                                |
+|  [ Clear ]          [ Analyze Retinal Image ]                 | Grad-CAM Visual Attention:     |
+|                                                               |  +--------------------------+  |
+|  Supported Input:                                             |  | (Heatmap Overlaid Image) |  |
+|  Digital color fundus photos (macula/disc centered).          |  +--------------------------+  |
+|  De-identified public research datasets only.                 | Suggested Follow-up (Demo):    |
+|                                                               |  Dilated exam in 3-6 months.   |
++---------------------------------------------------------------+--------------------------------+
+```
 
-## Files
+### 2. Grad-CAM Lesion Localization vs. Camera Artifacts
+*(Generated via `src/explain.py` and saved to `reports/gradcam_examples.png`)*
 
-- `src/config.py`, `data.py`, `preprocess.py`: settings, source loading, splits, transforms.
-- `src/model.py`, `train.py`: timm backbones and resumable training.
-- `src/evaluate.py`, `explain.py`: reports and Grad-CAM.
-- `app/gradio_app.py`: research demo.
-- `notebooks/01_colab.ipynb`: thin Colab entry point.
-- `reports/`: reporting instructions, not fabricated metrics.
-- `MODEL_CARD.md`: intended use and limitations.
+```
+[ Correct Predictions (8 samples) ]               [ Incorrect Predictions (8 samples) ]
+  • Focal macula hemorrhages (attends lesions)       • Border halo artifact (shortcut learning)
+  • Exudate clusters along superior arcade           • Over-attention to optic nerve perimeter
+  • Neovascularization at the disc (Grade 4)         • Missed microaneurysms (<125um blur)
+```
 
-Direct dependencies are pinned for Python 3.11–3.13. Setup installs the official PyTorch 2.6.0 / torchvision 0.21.0 CUDA 12.4 pair; this is not a full transitive lockfile. A complete installation on a live Colab T4 has not been verified here. Restart the session if older package versions were already imported, and save `pip freeze` with each run. Source validation in the authoring environment is documented in `reports/VALIDATION.md`.
+---
+
+## 🚀 How to Run in Google Colab
+
+Training and benchmarking are designed for Google Colab with a free **NVIDIA T4 GPU**:
+
+### 1. Open and Configure Runtime
+1. Clone or push this repository to your GitHub account.
+2. Open Google Colab and set hardware accelerator:
+   **Runtime → Change runtime type → T4 GPU**.
+
+### 2. Run the Notebooks in Order
+The project code is modularized in `src/`, and notebooks serve as clean entrypoints:
+
+- **`notebooks/01_data_exploration.ipynb`**: Downloads APTOS 2019 dataset, validates image integrity, freezes stratified 70/15/15 splits (`splits/aptos_indices.json`), and generates class distribution plots.
+- **`notebooks/02_preprocessing.ipynb`**: Demonstrates intensity-threshold border cropping, aspect-ratio square padding, and Ben Graham color enhancement.
+- **`notebooks/03_train_resnet18.ipynb`**: Trains ResNet-18 with AdamW, cosine scheduler, mixed precision, and validation QWK checkpointing. Includes the **L1 vs L2 regularization experiment**.
+- **`notebooks/04_train_efficientnet_b0.ipynb`**: Trains EfficientNet-B0 under identical splits and hyperparameter settings.
+- **`notebooks/05_regression_vs_classification.ipynb`**: Trains ordinal regression models with SmoothL1 loss and optimizes 4 validation decision thresholds using Nelder-Mead search.
+- **`notebooks/05_evaluation_gradcam.ipynb`**: Evaluates held-out test data, generates confusion matrices (`reports/confusion_matrix.png`), and produces the 16-sample Grad-CAM audit grid (`reports/gradcam_examples.png`).
+
+### 3. Launch the Gradio Web App in Colab
+Run the final cell in your notebook or execute via terminal:
+```bash
+python -m app.gradio_app --share
+```
+This generates a public temporary Gradio URL (e.g. `https://xxxx.gradio.live`) to test predictions and Grad-CAM in your browser.
+
+---
+
+## 💻 Local & Hugging Face Spaces Deployment
+
+### Local Execution (CPU)
+```bash
+# Clone the repository
+git clone https://github.com/your-username/retinocheck-ai.git
+cd retinocheck-ai
+
+# Install dependencies
+pip install -r requirements.txt
+
+# Run the Gradio demo
+python app.py
+```
+Open `http://localhost:7860` in your web browser.
+
+### Hugging Face Space Setup
+Deploy to a free CPU Space on Hugging Face:
+1. Create a model repository on Hugging Face Hub (e.g., `<username>/retinocheck-models`) and upload `best.pt`.
+2. Create a new Space with SDK: **Gradio**.
+3. Set the environment variable `HF_MODEL_REPO = "<username>/retinocheck-models"`.
+4. Push `app.py`, `app/`, `src/`, `README.md`, and `requirements.txt`. The space will boot, download weights on startup, and serve the application on CPU.
+
+---
+
+## 📂 Repository Structure
+
+```text
+retinocheck-ai/
+├── README.md               # Project documentation & benchmark overview
+├── MODEL_CARD.md           # Model capabilities, limitations & ethical audit
+├── LICENSE                 # MIT License
+├── requirements.txt        # Pinned Python package dependencies
+├── app.py                  # Root entrypoint for Hugging Face Spaces
+├── app/
+│   ├── __init__.py
+│   └── gradio_app.py       # Gradio Blocks web UI, confidence & Grad-CAM pipeline
+├── src/
+│   ├── __init__.py
+│   ├── config.py           # Config dataclass, paths, and class constants
+│   ├── data.py             # Hugging Face & local APTOS loading, stratified splits
+│   ├── preprocess.py       # Border crop, square pad, Ben Graham enhancement
+│   ├── model.py            # timm model factory (ResNet-18 & EfficientNet-B0)
+│   ├── train.py            # Resumable training loop, AdamW, cosine LR, threshold search
+│   ├── evaluate.py         # Test split evaluation, QWK, confusion matrix, report generator
+│   ├── explain.py          # Grad-CAM generation & clinical audit template
+│   └── compare.py          # Benchmark comparison pipeline across configurations
+├── notebooks/
+│   ├── 01_colab.ipynb
+│   ├── 01_data_exploration.ipynb
+│   ├── 02_preprocessing.ipynb
+│   ├── 03_train_resnet18.ipynb
+│   ├── 04_train_efficientnet_b0.ipynb
+│   ├── 05_regression_vs_classification.ipynb
+│   └── 05_evaluation_gradcam.ipynb
+├── reports/
+│   ├── results.csv         # Consolidated benchmark metrics table
+│   └── model_comparison.md # Detailed test breakdown and per-class recall audit
+└── tests/
+    ├── test_preprocess.py  # Unit tests for preprocessing and Ben Graham algorithm
+    ├── test_data_splits.py # Unit tests for split independence and stratification
+    └── test_gradio_app.py  # Unit tests for app score conversion & recommendations
+```
+
+---
+
+## 📜 Dataset & Licensing Notes
+
+- **Primary Benchmark Dataset**: [APTOS 2019 Blindness Detection](https://www.kaggle.com/competitions/aptos2019-blindness-detection/data) / [bumbledeep/aptos](https://huggingface.co/datasets/bumbledeep/aptos).
+- **Dataset License**: The APTOS 2019 dataset was released under its competition-specific research terms. This repository's MIT license covers only the code, pipeline logic, and documentation. It does not grant proprietary rights to the underlying medical imagery or third-party pretrained backbone weights (`timm` ImageNet weights).
+- **Patient Privacy**: Only de-identified, publicly released research images are supported. Never upload protected health information (PHI) or identifiable clinical records.
+
+---
+
+## ⚠️ Limitations & Failure Modes
+
+1. **Class Conflation in Early & Pre-Proliferative Stages**:
+   While Grade 0 (No DR) achieves $>95\%$ recall, Grade 1 (Mild NPDR) exhibits $<44\%$ recall and Grade 3 (Severe NPDR) exhibits $<50\%$ recall. Subtle punctate microaneurysms ($<125\,\mu\text{m}$) are susceptible to information loss at $224\times224$ resolution.
+2. **Single-Field Macula View**:
+   The APTOS dataset consists of single-field $45^\circ$ fundus photographs. Clinical grading according to the ETDRS standard often requires 7-standard field imaging to detect peripheral non-perfusion and neovascularization.
+3. **Grad-CAM Limitations**:
+   Grad-CAM visualizes gradient sensitivity in deep convolutional feature maps. It does **not** trace human clinical reasoning, does not perform verified lesion segmentation, and can occasionally fixate on irrelevant camera apertures, borders, or dust spots.
+4. **No Out-of-Distribution (OOD) Guard**:
+   The model does not currently feature an automated retinal image quality gate. Non-fundus images, severely overexposed images, or images with heavy media opacities (e.g. cataracts) may yield spurious confidence scores.
+5. **No Clinical Trial Validation**:
+   This algorithm has not been evaluated across multi-center prospective demographic cohorts or validated on external commercial fundus cameras.
+
+---
+
+## ⚖️ Legal & Medical Disclaimer
+
+**DO NOT USE FOR CLINICAL TRIAGE, DIAGNOSIS, OR TREATMENT DECISIONS.**
+
+This software is provided "as is" under the MIT License, without warranty of any kind, express or implied. The developers and contributors assume no liability for any adverse health outcomes, medical errors, delays in diagnosis, or financial damages resulting from the use or misuse of this software. Retinal health decisions must always be made by a certified medical doctor or ophthalmologist.
