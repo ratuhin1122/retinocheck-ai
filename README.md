@@ -33,44 +33,63 @@ RetinoCheck AI addresses these challenges with **ordinal regression**, **validat
 
 ## 🏗️ Architecture & Pipeline Diagram
 
-```
-[Raw Fundus Photo] (Arbitrary Resolution / Aspect Ratio)
-         │
-         ▼
-[Preprocessing Pipeline]
-   ├── 1. Intensity-threshold dark border crop (threshold >= 10)
-   ├── 2. Square aspect-ratio padding (maintains retinal circular geometry)
-   ├── 3. Bilinear spatial resize to 224 × 224 pixels
-   ├── 4. Optional Ben Graham local color enhancement:
-   │         I_enhanced = clip(4 * (I - GaussianBlur(I, σ)) + 128, 0, 255)
-   └── 5. ImageNet mean & standard deviation normalization
-         │
-         ▼
-[Deep Convolutional Backbone]
-   ├── ResNet-18 (Residual stages with bottleneck skip-connections)
-   └── EfficientNet-B0 (Compound scaling with MBConv inverted residual blocks + SE)
-         │
-         ▼
-[Dual Formulation Heads]
-   ├── 5-Class Categorical Logits ──► Softmax ──► Argmax Grade
-   └── 1-Output Scalar Regression ──► Continuous Severity Score s ∈ [0, 4]
-                                            │
-                                            ▼
-                           [Nelder-Mead 4-Threshold Optimization]
-                           [θ_0, θ_1, θ_2, θ_3] tuned on Validation QWK
-                                            │
-                                            ▼
-                                 [Predicted Grade 0 – 4]
-                                            │
-         ┌──────────────────────────────────┴──────────────────────────────────┐
-         ▼                                                                     ▼
-[5-Class Confidence Distribution]                                   [Grad-CAM Explainability]
- - Softmax probabilities (Classification)                           Target: layer4[-1] (ResNet)
- - Normalized Gaussian proximity kernel (Regression):                       conv_head (EfficientNet)
-   w_k = exp(-(s - k)² / (2σ²)), σ=0.65                                        │
-                                                                               ▼
-                                                                    [Visual Saliency Overlay]
-                                                                    (Lesions vs. Camera Artifacts)
+```mermaid
+flowchart TD
+    subgraph INPUT["1. Input Stage"]
+        RAW["Raw Retinal Fundus Photograph\n(Arbitrary Resolution & Aspect Ratio)"]
+    end
+
+    subgraph PREPROC["2. Standardized Preprocessing Pipeline"]
+        CROP["1. Intensity-Threshold Border Crop\n(Pixel Intensity >= 10)"]
+        PAD["2. Square Aspect-Ratio Padding\n(Preserves Circular Retinal Geometry)"]
+        RESIZE["3. Bilinear Spatial Resize\n(224 × 224 Pixels)"]
+        ENHANCE["4. Optional Ben Graham Local Color Enhancement\nclip(4 * (I - GaussianBlur(I, σ)) + 128, 0, 255)"]
+        NORM["5. ImageNet Normalization\n(Channel Mean & Standard Deviation)"]
+
+        CROP --> PAD --> RESIZE --> ENHANCE --> NORM
+    end
+
+    subgraph BACKBONE["3. Deep Convolutional Backbone"]
+        RESNET["ResNet-18\n(Residual Stages with Skip-Connections)"]
+        EFFNET["EfficientNet-B0 🏆\n(Compound Scaling with MBConv + SE Attention)"]
+    end
+
+    subgraph HEADS["4. Dual Formulation Heads"]
+        subgraph CLS_BRANCH["Classification Mode"]
+            CLS_HEAD["5-Class Categorical Head\n(Cross-Entropy Loss)"]
+            SOFTMAX["Softmax Probabilities"]
+            ARGMAX["Argmax Discrete Grade (0 - 4)"]
+            CLS_HEAD --> SOFTMAX --> ARGMAX
+        end
+
+        subgraph REG_BRANCH["Ordinal Regression Mode 🏆"]
+            REG_HEAD["1-Output Scalar Regression Head\n(Smooth L1 Loss)"]
+            SCORE["Continuous Severity Score\ns ∈ [0.00, 4.00]"]
+            THRESH["Nelder-Mead 4-Threshold Optimization\nValidation Cut-points: [θ₀, θ₁, θ₂, θ₃]"]
+            REG_PRED["Discrete Grade Prediction (0 - 4)"]
+            REG_HEAD --> SCORE --> THRESH --> REG_PRED
+        end
+    end
+
+    subgraph EXPLAIN["5. Explainability & Output Delivery"]
+        GRADCAM["Grad-CAM Saliency Engine\nTarget: layer4[-1] or conv_head"]
+        OVERLAY["Visual Saliency Overlay\n(Lesion Localization vs. Camera Artifacts)"]
+        CONF["5-Class Confidence Distribution\n(Softmax or Gaussian Proximity Kernel)"]
+        FOLLOWUP["Suggested Clinical Follow-up\n(Research Demo Protocol)"]
+
+        GRADCAM --> OVERLAY
+    end
+
+    RAW --> CROP
+    NORM --> RESNET & EFFNET
+    RESNET & EFFNET --> CLS_HEAD
+    RESNET & EFFNET --> REG_HEAD
+    RESNET & EFFNET -.-> GRADCAM
+
+    ARGMAX --> CONF
+    REG_PRED --> CONF
+    ARGMAX --> FOLLOWUP
+    REG_PRED --> FOLLOWUP
 ```
 
 ---
