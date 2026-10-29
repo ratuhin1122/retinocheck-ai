@@ -40,6 +40,25 @@ CSV logging
 -----------
 ``history.csv`` is written to ``config.output_dir`` after every epoch with
 columns: epoch, train_loss, val_loss, qwk, thresholds (regression only).
+
+Regularisation
+--------------
+Two orthogonal regularisation mechanisms are supported and may be combined:
+
+L2 via AdamW weight decay (``config.weight_decay``)
+    AdamW decouples the weight-decay step from the gradient update, so the
+    effective penalty is ``weight_decay * ||w||_2^2``.  Set
+    ``config.weight_decay=0`` to disable.
+
+L1 manual penalty (``l1_lambda`` argument to :func:`train`)
+    At each forward pass the sum of absolute parameter values is added to the
+    task loss: ``total_loss = task_loss + l1_lambda * sum(|w|)``.  Because
+    the L1 ball is a diamond (rhombus) in 2-D, its corners sit on the
+    coordinate axes, making it likely that the optimum lands exactly on an
+    axis and drives some weights to zero — that is, L1 induces sparsity.
+    L2 uses a circle / sphere whose smooth boundary never forces exact zeros,
+    so L2 shrinks weights uniformly rather than zeroing them.  Set
+    ``l1_lambda=0`` (default) to disable.
 """
 import argparse
 import csv
@@ -73,6 +92,27 @@ def atomic_save(payload: dict, path: Path) -> None:
     temporary = path.with_suffix(".tmp")
     torch.save(payload, temporary)
     os.replace(temporary, path)
+
+
+# ---------------------------------------------------------------------------
+# L1 penalty
+# ---------------------------------------------------------------------------
+
+def _l1_penalty(model: nn.Module) -> torch.Tensor:
+    """Return the sum of absolute values of all trainable parameters.
+
+    Called inside the training loop when ``l1_lambda > 0``.  The result is
+    a scalar tensor on the same device as the model so autograd can
+    differentiate through it.
+
+    Only parameters that require gradients are included; frozen layers (e.g.
+    a partially-frozen backbone) are excluded automatically.
+    """
+    penalty = torch.tensor(0.0, device=next(model.parameters()).device)
+    for param in model.parameters():
+        if param.requires_grad:
+            penalty = penalty + param.abs().sum()
+    return penalty
 
 
 # ---------------------------------------------------------------------------
@@ -259,7 +299,8 @@ def _write_csv(path: Path, history: list) -> None:
 # Main training function
 # ---------------------------------------------------------------------------
 
-def train(config: Config, resume: Optional[str] = None) -> List[dict]:
+def train(config: Config, resume: Optional[str] = None,
+          l1_lambda: float = 0.0) -> List[dict]:
     """Run the full training loop and return the epoch history list.
 
     Parameters
@@ -271,13 +312,21 @@ def train(config: Config, resume: Optional[str] = None) -> List[dict]:
         ``None`` a fresh run is started.  An existing ``last.pt`` in
         ``config.output_dir`` without a *resume* argument raises an error to
         prevent silent overwrites.
+    l1_lambda:
+        Coefficient for the manual L1 weight penalty added to the task loss
+        each mini-batch: ``total_loss = task_loss + l1_lambda * Σ|w|``.
+        Set to ``0.0`` (default) to train without L1 regularisation.  Can
+        be combined with AdamW ``weight_decay`` (L2) simultaneously.
 
     Returns
     -------
     list[dict]
         One entry per epoch with keys ``epoch``, ``train_loss``, ``val_loss``,
         ``qwk``, plus metric details from :func:`evaluate.metrics`.
+        Each row also carries ``l1_lambda`` so the history is self-describing.
     """
+    if l1_lambda < 0:
+        raise ValueError("l1_lambda must be >= 0")
     seed_everything(config.seed)
     root = Path(config.output_dir)
     root.mkdir(parents=True, exist_ok=True)
@@ -415,6 +464,10 @@ def train(config: Config, resume: Optional[str] = None) -> List[dict]:
                     loss = criterion(out.squeeze(-1), labels.float())
                 else:
                     loss = criterion(out, labels)
+                # L1 penalty is added inside autocast so it participates in
+                # mixed-precision scaling without a device-type mismatch.
+                if l1_lambda > 0.0:
+                    loss = loss + l1_lambda * _l1_penalty(model)
 
             if not torch.isfinite(loss):
                 raise FloatingPointError(
@@ -477,6 +530,7 @@ def train(config: Config, resume: Optional[str] = None) -> List[dict]:
             "epoch": epoch + 1,
             "train_loss": train_loss,
             "val_loss": val_loss,
+            "l1_lambda": l1_lambda,
             **result,
         }
         if config.mode == "regression":
@@ -525,6 +579,58 @@ def train(config: Config, resume: Optional[str] = None) -> List[dict]:
 
 
 # ---------------------------------------------------------------------------
+# Regularisation comparison helper
+# ---------------------------------------------------------------------------
+
+def train_one_config(
+    base_config: Config,
+    output_subdir: str,
+    weight_decay: float,
+    l1_lambda: float,
+    label: str,
+) -> List[dict]:
+    """Train one arm of a regularisation experiment and return its history.
+
+    Builds a fresh ``Config`` from *base_config* with ``weight_decay`` and
+    ``output_dir`` overridden, then calls :func:`train` with the given
+    *l1_lambda*.  Using a distinct *output_subdir* per arm keeps checkpoints,
+    CSV logs, and JSON histories isolated and re-readable after the kernel
+    restarts.
+
+    Parameters
+    ----------
+    base_config:
+        Template ``Config`` with all shared hyperparameters already set.
+    output_subdir:
+        Directory name appended to ``base_config.output_dir``.  The final
+        output path will be ``<base_config.output_dir>/<output_subdir>``.
+    weight_decay:
+        AdamW L2 weight-decay coefficient for this arm.
+    l1_lambda:
+        L1 penalty coefficient for this arm (0.0 = disabled).
+    label:
+        Human-readable arm label stored in each history row so results can
+        be assembled into a comparison table without looking at paths.
+
+    Returns
+    -------
+    list[dict]
+        Epoch history with an extra ``"arm"`` key set to *label*.
+    """
+    from dataclasses import replace as _dc_replace  # stdlib, always available
+
+    arm_config = _dc_replace(
+        base_config,
+        weight_decay=weight_decay,
+        output_dir=str(Path(base_config.output_dir) / output_subdir),
+    )
+    history = train(arm_config, l1_lambda=l1_lambda)
+    for row in history:
+        row["arm"] = label
+    return history
+
+
+# ---------------------------------------------------------------------------
 # CLI entry-point
 # ---------------------------------------------------------------------------
 
@@ -550,6 +656,10 @@ if __name__ == "__main__":
         "--no-threshold-search", action="store_true",
         help="Disable threshold optimiser (regression mode only)."
     )
+    parser.add_argument(
+        "--l1-lambda", type=float, default=0.0,
+        help="L1 penalty coefficient (0 = disabled)."
+    )
     parser.add_argument("--resume", default=None, metavar="CHECKPOINT")
     args = parser.parse_args()
 
@@ -564,4 +674,5 @@ if __name__ == "__main__":
             threshold_search=not args.no_threshold_search,
         ),
         args.resume,
+        l1_lambda=args.l1_lambda,
     )
