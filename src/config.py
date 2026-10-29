@@ -40,6 +40,17 @@ class Config:
     val_fraction: float = VAL_RATIO
     test_fraction: float = TEST_RATIO
     class_weights: bool = True
+    # --- new fields (train.py v2) -------------------------------------------
+    # "classification" uses CrossEntropyLoss; "regression" uses SmoothL1Loss.
+    mode: str = "classification"
+    # Number of DR severity grades (classification head width).
+    num_classes: int = 5
+    # Early-stopping patience in epochs (0 = disabled).
+    patience: int = 5
+    # Use a WeightedRandomSampler instead of class-weighted loss when True.
+    use_weighted_sampler: bool = False
+    # Run threshold search on the validation set after every epoch (regression).
+    threshold_search: bool = True
 
     @property
     def train_fraction(self):
@@ -49,6 +60,12 @@ class Config:
     def __post_init__(self):
         if self.model_name not in ("resnet18", "efficientnet_b0"):
             raise ValueError("Choose resnet18 or efficientnet_b0")
+        if self.mode not in ("classification", "regression"):
+            raise ValueError("mode must be 'classification' or 'regression'")
+        if self.num_classes < 2:
+            raise ValueError("num_classes must be at least 2")
+        if self.patience < 0:
+            raise ValueError("patience must be >= 0")
         if not (0 < self.val_fraction < 1 and 0 < self.test_fraction < 1
                 and self.val_fraction + self.test_fraction < 1):
             raise ValueError("Validation and test fractions must leave training data")

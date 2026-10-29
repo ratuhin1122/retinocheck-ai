@@ -25,11 +25,39 @@ def metrics(y_true, y_pred):
 
 
 @torch.no_grad()
-def predict(model, loader, device):
+def predict(model, loader, device, mode="classification", num_classes=5, thresholds=None):
+    """Return (truth, predictions) integer lists for any model mode.
+
+    Parameters
+    ----------
+    model:
+        Trained model in eval mode (or will be set to eval here).
+    loader:
+        DataLoader for the split to evaluate.
+    device:
+        ``"cuda"`` or ``"cpu"``.
+    mode:
+        ``"classification"`` (argmax) or ``"regression"`` (round / thresholds).
+    num_classes:
+        Used to clip regression outputs to [0, num_classes-1].
+    thresholds:
+        Optional array of ``num_classes - 1`` ascending cut-points for
+        regression.  Ignored when *mode* is ``"classification"``.
+    """
+    from .train import apply_thresholds, round_to_grades  # avoid circular at module level
     model.eval()
     truth, predictions = [], []
     for images, labels in loader:
-        predictions.extend(model(images.to(device)).argmax(1).cpu().tolist())
+        out = model(images.to(device))
+        if mode == "regression":
+            raw = out.squeeze(-1).cpu().float().numpy()
+            if thresholds is not None:
+                preds = apply_thresholds(raw, thresholds)
+            else:
+                preds = round_to_grades(raw, num_classes)
+            predictions.extend(preds.tolist())
+        else:
+            predictions.extend(out.argmax(1).cpu().tolist())
         truth.extend(labels.tolist())
     return truth, predictions
 
@@ -37,8 +65,14 @@ def predict(model, loader, device):
 def evaluate(checkpoint_path, output_dir="reports", split="test"):
     device = "cuda" if torch.cuda.is_available() else "cpu"
     model, config, checkpoint = load_checkpoint(checkpoint_path, device)
+    mode = checkpoint["config"].get("mode", "classification")
+    num_classes = checkpoint["config"].get("num_classes", 5)
+    saved_thr = checkpoint.get("best_thresholds")
+    thresholds = np.array(saved_thr) if saved_thr is not None else None
     loaders, _, _ = make_loaders(config, checkpoint["manifest"])
-    truth, predictions = predict(model, loaders[split], device)
+    truth, predictions = predict(model, loaders[split], device,
+                                 mode=mode, num_classes=num_classes,
+                                 thresholds=thresholds)
     result = metrics(truth, predictions)
     root = Path(output_dir)
     root.mkdir(parents=True, exist_ok=True)
