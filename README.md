@@ -98,11 +98,30 @@ Per-class recall and confusion matrices have **not been added to this README yet
 
 ## 🖼️ Screenshots
 
-Real screenshots will be added here:
+### Gradio Research Web Application
+Below is the live Gradio interface evaluating a retinal fundus photograph, displaying the predicted severity grade, confidence distribution across grades 0–4, Grad-CAM visual attention overlay, and research follow-up recommendation:
 
-- `reports/gradcam_examples.png`: Grad-CAM grid of correct and incorrect predictions
-- `reports/preprocessing_examples.png`: before/after preprocessing
-- Gradio app screenshot: *(to be added)*
+![RetinoCheck AI Gradio App Screenshot](reports/screenshots/gradio_app.jpg)
+
+### Evaluation Artifacts
+- `reports/gradcam_examples.png`: Grad-CAM grid of correct and incorrect predictions on held-out test images
+- `reports/preprocessing_examples.png`: Side-by-side comparison of raw vs. border-cropped, square-padded, and Ben Graham enhanced images
+
+---
+
+## 🩺 Diabetic Retinopathy Grading Scale (Photo Check Reference)
+
+Use this reference table to interpret the predicted grade when analyzing a fundus photo:
+
+| Grade | Meaning |
+| :---: | :--- |
+| **0** | **No diabetic retinopathy** |
+| **1** | **Mild** |
+| **2** | **Moderate** |
+| **3** | **Severe** |
+| **4** | **Proliferative DR** |
+
+> *Note: Grades 0–4 correspond to the International Clinical Diabetic Retinopathy (ICDR) severity scale. This automated grading is for research benchmarking only and does not constitute a clinical diagnosis.*
 
 ---
 
