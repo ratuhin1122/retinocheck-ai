@@ -194,7 +194,7 @@ This generates a public temporary Gradio URL (e.g. `https://xxxx.gradio.live`) t
 ### Local Execution (CPU)
 ```bash
 # Clone the repository
-git clone https://github.com/your-username/retinocheck-ai.git
+git clone https://github.com/ratuhin1122/retinocheck-ai.git
 cd retinocheck-ai
 
 # Install dependencies

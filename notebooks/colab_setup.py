@@ -6,7 +6,7 @@ from pathlib import Path
 import subprocess
 import sys
 
-REPO_URL = "https://github.com/YOUR_USERNAME/YOUR_REPO.git"  # Replace this.
+REPO_URL = "https://github.com/ratuhin1122/retinocheck-ai.git"
 REPO_DIR = Path("/content/retinocheck-ai")
 DRIVE_ROOT = Path("/content/drive/MyDrive/RetinoCheckAI")
 
